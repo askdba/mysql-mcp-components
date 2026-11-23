@@ -1,14 +1,14 @@
 # MCP components
 
-Server-side components for [mysql-mcp-server](https://github.com/askdba/mysql-mcp-server), designed in its [RFC 0001](https://github.com/askdba/mysql-mcp-server/blob/main/docs/rfc/0001-mysql-component-architecture.md). They are opt-in and separate from MyVector: `MYVECTOR_BUILD_MCP=ON ./scripts/build-component-<ver>-docker.sh` builds `component_mcp_guard.so` next to the MyVector component.
+Server-side components for [mysql-mcp-server](https://github.com/askdba/mysql-mcp-server), designed in its [RFC 0001](https://github.com/askdba/mysql-mcp-server/blob/main/docs/rfc/0001-mysql-component-architecture.md). `scripts/build-components-docker.sh mysql-<version> <out-dir>` builds `component_mcp_guard.so` for that exact MySQL release (add `BUILD_ENDPOINT=ON` for `component_mcp` on 26.10). They were developed in [askdba/myvector](https://github.com/askdba/myvector), where their earlier issues and pull requests live.
 
 | Component | Status | Servers |
 |---|---|---|
 | `component_mcp_guard` | Phase 2: identity, read-only and schema enforcement, time limit, error log, status variables | MySQL 8.4, 9.7, 26.10 |
-| `mysql_mcp` SQL tool pack ([`sql/mcp/`](https://github.com/askdba/myvector/tree/main/sql/mcp)) | 1.0.0 | MySQL 8.0 to 26.10, MariaDB 11.4, 12.3 |
+| `mysql_mcp` SQL tool pack ([`sql/mcp/`](../sql/mcp)) | 1.0.0 | MySQL 8.0 to 26.10, MariaDB 11.4, 12.3 |
 | `component_mcp` | **Phase 4 spike** (not for production): an MCP endpoint inside `mysqld` | MySQL 26.10 |
 
-**Maintainer:** [@askdba](https://github.com/askdba) owns the C++ code of these components (RFC 0001 §10). `.github/CODEOWNERS` routes reviews of `src/mcp/`, `sql/mcp/` and the MCP scripts to them.
+**Maintainer:** [@askdba](https://github.com/askdba) owns the C++ code of these components (RFC 0001 §10). `.github/CODEOWNERS` routes reviews to them.
 
 ## component_mcp_guard
 
@@ -48,7 +48,7 @@ docker run -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=shop 
 MYSQL_DSN='mcp:mcp-secret@tcp(127.0.0.1:3306)/shop' mysql-mcp-server
 ```
 
-The images are built and published with MyVector releases (`docker-publish.yml`). `scripts/test-mysql-mcp-image.sh <image>` tests the first-start setup, and CI (`integration-scripts.yml`, job `mcp-guard`) runs it on each version.
+The images are built and published on each release of this repository (`docker-publish.yml`, on a `v*` tag). `scripts/test-mysql-mcp-image.sh <image>` tests the first-start setup, and CI (`ci.yml`, job `mcp-guard`) runs it on each version.
 
 ### MCP sessions
 
@@ -184,9 +184,9 @@ The option is `mcp.read_only`, `mcp.deny_system_schemas`, `mcp.allowed_schemas` 
 
 ### Tests
 
-`scripts/test-mcp-guard.sh <mysql-tag> <artifact-dir>` runs install, restart, persistence, uninstall and the enforcement cases, the tool-call table and its labels, views, multi-statement packets, statements without table access events, sessions opened by components and the parity table below against the official image (123 checks, including a `lower_case_table_names=1` server), and `src/mcp/guard/test_mcp_guard_policy.cc` unit-tests the classification and the SQL scanner. CI (`integration-scripts.yml`, job `mcp-guard`) runs both on MySQL 8.4.11, 9.7.2 and 26.10.0.
+`scripts/test-mcp-guard.sh <mysql-tag> <artifact-dir>` runs install, restart, persistence, uninstall and the enforcement cases, the tool-call table and its labels, views, multi-statement packets, statements without table access events, sessions opened by components and the parity table below against the official image (123 checks, including a `lower_case_table_names=1` server), and `src/mcp/guard/test_mcp_guard_policy.cc` unit-tests the classification and the SQL scanner. CI (`ci.yml`, job `mcp-guard`) runs both on MySQL 8.4.11, 9.7.2 and 26.10.0.
 
-**Parity with mysql-mcp-server** (RFC 0001 §5.2 item 7): [`sql/mcp/guard-parity.tsv`](https://github.com/askdba/myvector/blob/main/sql/mcp/guard-parity.tsv) lists statements a `run_query` call might send, with the verdict of mysql-mcp-server's validator (`go`) and of the guard under the default settings (`guard`). Every row where they differ says why. The test checks the guard column, sending each statement as one packet. mysql-mcp-server vendors the file and checks the go column. Both reject every write and locking read. The guard allows a few things the validator does not (session `SET`, `information_schema`, `CALL mysql_mcp.*`) and catches what text checks cannot (a write inside a function called from `SELECT`).
+**Parity with mysql-mcp-server** (RFC 0001 §5.2 item 7): [`sql/mcp/guard-parity.tsv`](../sql/mcp/guard-parity.tsv) lists statements a `run_query` call might send, with the verdict of mysql-mcp-server's validator (`go`) and of the guard under the default settings (`guard`). Every row where they differ says why. The test checks the guard column, sending each statement as one packet. mysql-mcp-server vendors the file and checks the go column. Both reject every write and locking read. The guard allows a few things the validator does not (session `SET`, `information_schema`, `CALL mysql_mcp.*`) and catches what text checks cannot (a write inside a function called from `SELECT`).
 
 ### Overhead on non-MCP traffic
 
@@ -240,8 +240,7 @@ An MCP **Streamable HTTP** endpoint (JSON-RPC 2.0 over `POST /mcp`) inside `mysq
 It links the Router HTTP libraries, so it is built in the MySQL 26.10 source tree, like MRS:
 
 ```sh
-MYVECTOR_BUILD_MCP=ON MYVECTOR_BUILD_MCP_ENDPOINT=ON \
-  ./scripts/build-component-26.10-docker.sh mysql-26.10.0 dist/mcp-26.10.0
+BUILD_ENDPOINT=ON ./scripts/build-components-docker.sh mysql-26.10.0 dist/mcp-26.10.0
 ```
 
 Use a random token and hash it outside MySQL, so the plaintext never appears in statement text (general and slow logs, audit logs, `performance_schema` history):
@@ -406,4 +405,4 @@ On amd64 the build leaves one function of MySQL's vendored HTTP parser uninstrum
 
 Run locally: `scripts/build-mcp-asan-26.10-docker.sh mysql-26.10.0 dist/mcp-asan`, then `scripts/fuzz-mcp-endpoint.sh dist/mcp-asan/mysql-asan.tar.gz <seconds> <out-dir> [seed]`. Under ASAN the server takes several minutes to initialize and start.
 
-CI (`integration-scripts.yml`, job `mcp-endpoint`) builds and runs it on 26.10.0.
+CI (`ci.yml`, job `mcp-endpoint`) builds and runs it on 26.10.0.

@@ -1,0 +1,9 @@
+# MySQL source trees and build output (scripts/build-components-docker.sh)
+mysql-server-*/
+build*/
+dist/
+mysql-asan/
+# Staged image inputs (docker-publish.yml, CI)
+component_mcp_guard-*.so
+out/
+__pycache__/

@@ -98,5 +98,5 @@ It picks the pack up again on its next restart.
 procedure with the Go server's query, run as a prepared statement, as root and as an
 `EXECUTE`-only account. The fixture has mixed-case schemas, a table name with a backtick,
 views, triggers, routines, partitions, foreign keys and (MySQL 9+) `VECTOR` columns. It also
-checks the safety rules. CI (`integration-scripts.yml`, job `mcp-tool-pack`) runs it on
+checks the safety rules. CI (`ci.yml`, job `mcp-tool-pack`) runs it on
 MySQL 8.0, 8.4, 9.7 and 26.10 and MariaDB 11.4 and 12.3.

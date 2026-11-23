@@ -1,0 +1,123 @@
+name: CI
+
+# component_mcp_guard on each supported MySQL release, component_mcp on 26.10 (end to end and
+# MCP conformance), the SQL tool pack on MySQL and MariaDB, and the mysql-mcp image.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          bash <(curl -sL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color .github/workflows/*.yml
+      - name: Shell syntax
+        run: for f in scripts/*.sh docker/mysql-mcp/*.sh; do bash -n "$f"; done
+      - name: Python syntax
+        run: python3 -m py_compile scripts/mcp-fuzz/fuzz.py scripts/mcp-conformance/sdk_client.py
+
+  mcp-guard:
+    # Unit-test the policy, build the guard, and run its lifecycle and enforcement test
+    # (scripts/test-mcp-guard.sh) and the mysql-mcp image test on the official image of the
+    # same patch release.
+    name: mcp-guard (${{ matrix.mysql-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql-version: ["8.4.11", "9.7.2", "26.10.0"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Policy unit test
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -o /tmp/test_mcp_guard_policy src/mcp/guard/test_mcp_guard_policy.cc
+          /tmp/test_mcp_guard_policy
+
+      - name: Build component_mcp_guard
+        env:
+          MYSQL_VERSION: ${{ matrix.mysql-version }}
+        run: |
+          scripts/build-components-docker.sh "mysql-$MYSQL_VERSION" "dist/mcp-$MYSQL_VERSION"
+          test -f "dist/mcp-$MYSQL_VERSION/component_mcp_guard.so"
+
+      - name: Lifecycle test
+        env:
+          MYSQL_VERSION: ${{ matrix.mysql-version }}
+        run: scripts/test-mcp-guard.sh "$MYSQL_VERSION" "dist/mcp-$MYSQL_VERSION"
+
+      - name: mysql-mcp image test
+        env:
+          MYSQL_VERSION: ${{ matrix.mysql-version }}
+        run: |
+          cp "dist/mcp-$MYSQL_VERSION/component_mcp_guard.so" component_mcp_guard-amd64.so
+          docker build -f docker/mysql-mcp/Dockerfile --build-arg MYSQL_VERSION="$MYSQL_VERSION" \
+            --build-arg TARGETARCH=amd64 -t "mysql-mcp-smoke:$MYSQL_VERSION" .
+          scripts/test-mysql-mcp-image.sh "mysql-mcp-smoke:$MYSQL_VERSION"
+
+  mcp-endpoint:
+    # component_mcp, built in the MySQL 26.10 tree with the Router HTTP libraries, tested end to
+    # end with the guard and the tool pack, then MCP conformance against two clients.
+    name: mcp-endpoint (26.10.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build component_mcp_guard and component_mcp
+        env:
+          BUILD_ENDPOINT: "ON"
+        run: |
+          scripts/build-components-docker.sh mysql-26.10.0 dist/mcp-26.10.0
+          test -f dist/mcp-26.10.0/component_mcp.so
+
+      - name: Endpoint test
+        run: scripts/test-mcp-endpoint.sh mysql:26.10.0 dist/mcp-26.10.0
+
+      - name: MCP conformance (MCP Inspector CLI, Python SDK client)
+        run: scripts/test-mcp-conformance.sh mysql:26.10.0 dist/mcp-26.10.0
+
+  mcp-tool-pack:
+    # The mysql_mcp SQL tool pack: install, re-install, and parity of every procedure with
+    # mysql-mcp-server's own query, as root and as an EXECUTE-only MCP account.
+    name: mcp-tool-pack (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["mysql:8.0", "mysql:8.4", "mysql:9.7", "mysql:26.10", "mariadb:11.4", "mariadb:12.3"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Tool pack test
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: scripts/test-mcp-tool-pack.sh "$IMAGE"

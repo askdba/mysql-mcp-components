@@ -6,7 +6,7 @@
 # Usage: scripts/test-mcp-guard.sh <mysql-image-tag> <artifact-dir>
 #   e.g. scripts/test-mcp-guard.sh 9.7 dist/mcp-guard-9.7.2
 # The artifact dir holds component_mcp_guard.so and the test-only component_mcp_session_probe.so
-# (both built with MYVECTOR_BUILD_MCP=ON).
+# (both built by scripts/build-components-docker.sh).
 # Requires Docker. bash 3.2+.
 set -u
 

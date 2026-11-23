@@ -1,0 +1,97 @@
+name: Publish mysql-mcp images
+
+# Builds component_mcp_guard for each supported release (amd64, arm64) and publishes the
+# mysql-mcp image family, ghcr.io/<owner>/mysql-mcp:<mysql-version> and :<mysql-release>: the
+# official MySQL image of that exact release with the guard and the SQL tool pack. A component
+# works only on the exact release it was built against, so each image is based on it.
+#
+# Runs on a release tag (v*), or by hand: a dry run builds and tests without pushing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and test the images without pushing (safe from a branch)."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mysql-mcp-image:
+    # Push only from a version tag; a dispatch from a branch must not overwrite public tags.
+    name: mysql-mcp (${{ matrix.mysql-release }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mysql-release: "8.4.13"
+            mysql-version: "8.4"
+          - mysql-release: "9.7.4"
+            mysql-version: "9.7"
+          - mysql-release: "26.10.0"
+            mysql-version: "26.10"
+    env:
+      PUSH: ${{ startsWith(github.ref, 'refs/tags/v') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build component_mcp_guard (amd64, arm64)
+        env:
+          MYSQL_RELEASE: ${{ matrix.mysql-release }}
+        run: |
+          for arch in amd64 arm64; do
+            DOCKER_PLATFORM="linux/${arch}" scripts/build-components-docker.sh \
+              "mysql-${MYSQL_RELEASE}" "dist/${arch}"
+            # The Dockerfile copies component_mcp_guard-<arch>.so from the repo root.
+            cp "dist/${arch}/component_mcp_guard.so" "component_mcp_guard-${arch}.so"
+          done
+
+      - name: Test the image
+        env:
+          MYSQL_RELEASE: ${{ matrix.mysql-release }}
+        run: |
+          for arch in amd64 arm64; do
+            docker buildx build --platform "linux/${arch}" --file docker/mysql-mcp/Dockerfile \
+              --build-arg MYSQL_VERSION="$MYSQL_RELEASE" -t "mysql-mcp-smoke:${MYSQL_RELEASE}-${arch}" --load .
+          done
+          # Full first-start test natively; arm64 under QEMU checks the contents only.
+          scripts/test-mysql-mcp-image.sh "mysql-mcp-smoke:${MYSQL_RELEASE}-amd64"
+          docker run --rm --platform linux/arm64 --entrypoint /bin/sh "mysql-mcp-smoke:${MYSQL_RELEASE}-arm64" -c \
+            "test -f /usr/lib64/mysql/plugin/component_mcp_guard.so && test -f /usr/share/mysql-mcp/mysql_mcp.sql && test -f /docker-entrypoint-initdb.d/50-mysql-mcp.sh"
+
+      - name: Log in to GitHub Container Registry
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/mysql-mcp/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUSH == 'true' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mysql-mcp:${{ matrix.mysql-version }}
+            ghcr.io/${{ github.repository_owner }}/mysql-mcp:${{ matrix.mysql-release }}
+          build-args: |
+            MYSQL_VERSION=${{ matrix.mysql-release }}

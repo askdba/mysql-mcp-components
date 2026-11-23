@@ -1,0 +1,26 @@
+MySQL MCP components
+Copyright askdba (Alkin Tezuysal)
+
+This product is licensed under the GNU General Public License v2.0.
+See the LICENSE file for the full license text.
+
+Exception: the files under sql/mcp/ (the mysql_mcp SQL tool pack, which
+mysql-mcp-server vendors) are licensed under the Apache License, Version 2.0.
+See sql/mcp/LICENSE.
+
+These components moved here from askdba/myvector, with their history
+(see the commit log for earlier contributions).
+
+================================================================================
+MySQL Server
+================================================================================
+
+Copyright (c) 2000, 2026, Oracle and/or its affiliates.
+
+The components are built against the MySQL Server source tree and use its
+component services, which are licensed under the GNU General Public License
+v2.0 with the FOSS License Exception. component_mcp links MySQL Router's HTTP
+server libraries from the same tree, and is built with an edited copy of one
+of its headers (src/mcp/endpoint/router_connection_edits.cmake).
+
+Source: https://github.com/mysql/mysql-server

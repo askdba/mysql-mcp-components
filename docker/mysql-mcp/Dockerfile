@@ -12,8 +12,8 @@ ARG TARGETARCH
 
 LABEL org.opencontainers.image.title="mysql-mcp" \
       org.opencontainers.image.description="MySQL with component_mcp_guard and the mysql_mcp tool pack for mysql-mcp-server" \
-      org.opencontainers.image.source="https://github.com/askdba/myvector" \
-      org.opencontainers.image.documentation="https://github.com/askdba/myvector/blob/main/docs/MCP_COMPONENTS.md" \
+      org.opencontainers.image.source="https://github.com/askdba/mysql-mcp-components" \
+      org.opencontainers.image.documentation="https://github.com/askdba/mysql-mcp-components/blob/main/docs/MCP_COMPONENTS.md" \
       org.opencontainers.image.licenses="GPL-2.0-only AND Apache-2.0"
 
 # Statically linked against libstdc++/libgcc and built in oraclelinux:9, this image's base.

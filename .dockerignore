@@ -1,0 +1,7 @@
+.git
+.github
+mysql-server-*/
+mysql-asan/
+build*/
+dist/
+out/
