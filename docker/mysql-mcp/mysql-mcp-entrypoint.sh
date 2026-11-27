@@ -37,6 +37,22 @@ check_settings() {
 	case "${MYSQL_MCP_MAX_EXECUTION_TIME_MS:-}" in
 	*[!0-9]*) mcp_error "MYSQL_MCP_MAX_EXECUTION_TIME_MS must be a number of milliseconds" ;;
 	esac
+	if [ -n "${MYSQL_MCP_HTTP_TOKEN:-}" ]; then
+		[ -f /usr/lib64/mysql/plugin/component_mcp.so ] ||
+			mcp_error "MYSQL_MCP_HTTP_TOKEN is set, but this image has no component_mcp (it needs MySQL 26.10)"
+		[ -n "${MYSQL_MCP_USER:-}" ] || mcp_error "MYSQL_MCP_HTTP_TOKEN needs MYSQL_MCP_USER (the account the token runs as)"
+		[ "${#MYSQL_MCP_HTTP_TOKEN}" -ge 32 ] ||
+			mcp_error "MYSQL_MCP_HTTP_TOKEN must be at least 32 characters (e.g. openssl rand -hex 32)"
+		case "${MYSQL_MCP_HTTP_PORT:-33480}" in
+		'' | *[!0-9]*) mcp_error "MYSQL_MCP_HTTP_PORT must be a port number" ;;
+		esac
+		[ "${MYSQL_MCP_HTTP_PORT:-33480}" -ge 1 ] && [ "${MYSQL_MCP_HTTP_PORT:-33480}" -le 65535 ] ||
+			mcp_error "MYSQL_MCP_HTTP_PORT must be 1 to 65535"
+		if [ -n "${MYSQL_MCP_HTTP_SSL_CERT:-}${MYSQL_MCP_HTTP_SSL_KEY:-}" ] &&
+			{ [ -z "${MYSQL_MCP_HTTP_SSL_CERT:-}" ] || [ -z "${MYSQL_MCP_HTTP_SSL_KEY:-}" ]; }; then
+			mcp_error "set MYSQL_MCP_HTTP_SSL_CERT and MYSQL_MCP_HTTP_SSL_KEY together"
+		fi
+	fi
 }
 
 # As the official entrypoint: a command starting with an option runs mysqld.
