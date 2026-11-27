@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests a mysql-mcp image (docker/mysql-mcp/Dockerfile): first-start setup of
 # component_mcp_guard, the mysql_mcp tool pack and the MYSQL_MCP_* account and settings,
-# and that they survive a restart.
+# and that they survive a restart; on an image with component_mcp (26.10), the MCP endpoint
+# enabled with MYSQL_MCP_HTTP_TOKEN.
 #
 # Usage: scripts/test-mysql-mcp-image.sh <image>
 #   e.g. scripts/test-mysql-mcp-image.sh mysql-mcp-smoke:9.7
@@ -17,7 +18,8 @@ ok() { PASS=$((PASS + 1)); printf '  PASS  %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s  -- %s\n' "$1" "$2"; }
 TMPF=$(mktemp)
 chmod 644 "$TMPF" # copied into containers, where mysqld (user mysql) must read it
-cleanup() { docker rm -f -v "$CNAME" "$CNAME_PLAIN" "$CNAME_PLAIN-2" >/dev/null 2>&1; rm -f "$TMPF"; }
+CNAME_HTTP=$CNAME-http
+cleanup() { docker rm -f -v "$CNAME" "$CNAME_PLAIN" "$CNAME_PLAIN-2" "$CNAME_HTTP" >/dev/null 2>&1; rm -f "$TMPF"; }
 trap cleanup EXIT
 expect() {
 	if printf '%s\n' "$2" | grep -Eq -- "$3"; then ok "$1"; else bad "$1" "got: $(printf '%s' "$2" | head -c 300)"; fi
@@ -148,6 +150,55 @@ if wait_ready "$CNAME_PLAIN" testpass; then
 	expect "NO_BACKSLASH_ESCAPES: settings keep the backslash" "$(as "$CNAME_PLAIN" root testpass "SELECT @@mcp.allowed_schemas")" '^x\\?\\y$'
 else
 	bad "NO_BACKSLASH_ESCAPES container" "did not start"
+fi
+unset PORT
+docker rm -f -v "$CNAME_PLAIN" >/dev/null 2>&1
+
+# component_mcp: MYSQL_MCP_HTTP_TOKEN enables the MCP endpoint (26.10 image), on 0.0.0.0 with
+# TLS from the server's own certificate, the token mapped to MYSQL_MCP_USER.
+TOKEN=mysql-mcp-image-test-token-0123456789abcdef
+CALL='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_query","arguments":{"sql":"SELECT CURRENT_USER() AS u"}}}'
+# https_call URL TOKEN [docker run args]: one call; prints the body, then the HTTP status.
+https_call() { docker run --rm ${3:-} curlimages/curl:8.11.1 -sk -m 20 -w '\n%{http_code}' -X POST "$1" \
+	-H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+	-H "Authorization: Bearer $2" -d "$CALL"; }
+if docker run --rm --entrypoint test "$IMAGE" -f /usr/lib64/mysql/plugin/component_mcp.so; then
+	docker run -d --name "$CNAME_HTTP" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp \
+		-e MYSQL_MCP_PASSWORD=pw -e MYSQL_MCP_HTTP_TOKEN="$TOKEN" "$IMAGE" >/dev/null
+	if wait_ready "$CNAME_HTTP" testpass; then
+		http_root() { as "$CNAME_HTTP" root testpass "$1"; }
+		LOCAL=https://127.0.0.1:33480/mcp
+		expect "endpoint: component_mcp installed" "$(http_root "SELECT component_urn FROM mysql.component" | tr '\n' ' ')" "component_mcp_guard file://component_mcp "
+		expect "endpoint: only the token's SHA-256 is stored" "$(http_root "SELECT token_sha256 = SHA2('$TOKEN', 256), account FROM mysql.mcp_tokens" | tr '\t' ' ')" "^1 mcp@%$"
+		expect "endpoint: settings persisted" "$(http_root "SELECT CONCAT_WS(',', @@mcp_http.port, @@mcp_http.bind_address, @@mcp_http.ssl_cert)")" "^33480,0.0.0.0,/var/lib/mysql/server-cert.pem$"
+		expect "endpoint: an HTTPS call runs as MYSQL_MCP_USER" "$(https_call "$LOCAL" "$TOKEN" "--network container:$CNAME_HTTP" | tr -d '\n')" 'u\\":\\"mcp@%\\".*"isError":false.*200$'
+		expect "endpoint: a wrong token gets 401" "$(https_call "$LOCAL" "wrong-$TOKEN" "--network container:$CNAME_HTTP" | tail -1)" "^401$"
+		IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CNAME_HTTP")
+		expect "endpoint: reachable from another container" "$(https_call "https://$IP:33480/mcp" "$TOKEN" | tail -1)" "^200$"
+		expect "endpoint: no plain HTTP on the TLS port" "$(docker run --rm --network "container:$CNAME_HTTP" curlimages/curl:8.11.1 -s -m 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:33480/mcp -d '{}' || true)" "^(000|400)$"
+		docker restart "$CNAME_HTTP" >/dev/null && wait_ready "$CNAME_HTTP" testpass
+		expect "endpoint: serves again after a restart" "$(https_call "$LOCAL" "$TOKEN" "--network container:$CNAME_HTTP" | tail -1)" "^200$"
+		expect "endpoint: setup not run again" "$(docker logs "$CNAME_HTTP" 2>&1 | grep -c 'installing component_mcp (MCP endpoint)')" "^1$"
+	else
+		bad "endpoint container" "did not start: $(docker logs "$CNAME_HTTP" 2>&1 | grep -i error | head -3)"
+	fi
+	docker rm -f -v "$CNAME_HTTP" >/dev/null 2>&1
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
+		-e MYSQL_MCP_HTTP_TOKEN=short "$IMAGE" >/dev/null
+	refused "a short MYSQL_MCP_HTTP_TOKEN" "MYSQL_MCP_HTTP_TOKEN must be at least 32 characters"
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_HTTP_TOKEN="$TOKEN" "$IMAGE" >/dev/null
+	refused "MYSQL_MCP_HTTP_TOKEN without MYSQL_MCP_USER" "MYSQL_MCP_HTTP_TOKEN needs MYSQL_MCP_USER"
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
+		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" -e MYSQL_MCP_HTTP_SSL_CERT=/certs/missing.pem \
+		-e MYSQL_MCP_HTTP_SSL_KEY=/certs/missing-key.pem "$IMAGE" >/dev/null
+	refused "a certificate file that does not exist" "/certs/missing.pem is not a file mysqld (user mysql) can read"
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
+		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" -e MYSQL_MCP_HTTP_SSL_CERT=/etc -e MYSQL_MCP_HTTP_SSL_KEY=/etc "$IMAGE" >/dev/null
+	refused "a certificate path that is a directory" "/etc is not a file mysqld (user mysql) can read"
+else
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
+		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" "$IMAGE" >/dev/null
+	refused "MYSQL_MCP_HTTP_TOKEN on an image without component_mcp" "this image has no component_mcp"
 fi
 
 echo "== $IMAGE: $PASS passed, $FAIL failed"
