@@ -43,7 +43,10 @@ TOKENS = {"main": "fuzz-token-main", "table": "fuzz-token-table", "locked": "fuz
 FUZZ_TOKENS = [v for k, v in TOKENS.items() if k != "soak"]
 TOKEN_HASHES = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in TOKENS.items()}
 VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
-TOOLS = ["list_databases", "list_tables", "describe_table", "run_query", "ping", "server_info"]
+TOOLS = ["list_databases", "list_tables", "describe_table", "run_query", "ping", "server_info",
+         "show_create_table", "list_indexes", "list_views", "list_triggers", "list_procedures",
+         "list_functions", "list_partitions", "database_size", "table_size", "foreign_keys",
+         "list_status", "list_variables", "vector_info", "search_schema"]
 METHODS = ["initialize", "tools/list", "tools/call", "ping", "server/discover",
            "notifications/initialized", "notifications/cancelled", "resources/list",
            "prompts/list", "subscriptions/listen", "logging/setLevel", "completion/complete"]

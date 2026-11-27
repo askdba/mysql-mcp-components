@@ -21,6 +21,11 @@ import mcp.client.streamable_http as streamable
 from mcp import ClientSession
 
 URL, TOKEN = sys.argv[1], sys.argv[2]
+# The tools component_mcp serves: the six core tools and the tool pack's catalog tools.
+TOOLS = ["list_databases", "list_tables", "describe_table", "run_query", "ping", "server_info",
+         "show_create_table", "list_indexes", "list_views", "list_triggers", "list_procedures",
+         "list_functions", "list_partitions", "database_size", "table_size", "foreign_keys",
+         "list_status", "list_variables", "vector_info", "search_schema"]
 exchanges = []  # (method, session id sent, protocol version sent, status, session id received)
 get_answered = None  # asyncio.Event: the SDK's background GET got its response
 failed = 0
@@ -62,9 +67,7 @@ async def main():
                 check("server name", init.server_info.name == "component_mcp", init.server_info.name)
 
                 tools = {t.name: t for t in (await session.list_tools()).tools}
-                check("tools/list: the six core tools",
-                      sorted(tools) == sorted(["list_databases", "list_tables", "describe_table",
-                                               "run_query", "ping", "server_info"]), sorted(tools))
+                check("tools/list: the 20 tools", sorted(tools) == sorted(TOOLS), sorted(tools))
                 ro = tools.get("list_tables")
                 check("tools carry readOnlyHint",
                       ro is not None and ro.annotations is not None and ro.annotations.read_only_hint,
@@ -150,10 +153,8 @@ async def main_stateless():
                       session.server_capabilities)
 
                 tools = await session.list_tools()
-                check("2026-07-28: tools/list: the six core tools",
-                      sorted(t.name for t in tools.tools) == sorted(
-                          ["list_databases", "list_tables", "describe_table", "run_query", "ping",
-                           "server_info"]), [t.name for t in tools.tools])
+                check("2026-07-28: tools/list: the 20 tools",
+                      sorted(t.name for t in tools.tools) == sorted(TOOLS), [t.name for t in tools.tools])
                 r = await session.call_tool("run_query", {"sql": "SELECT i FROM d1.t"})
                 check("2026-07-28: tools/call run_query",
                       not r.is_error and json.loads(text(r))["rows"] == [{"i": "1"}], text(r))

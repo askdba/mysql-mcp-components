@@ -4,6 +4,7 @@
 
 - Moved from askdba/myvector with history: `component_mcp_guard`, `component_mcp`, the `mysql_mcp` SQL tool pack, the `mysql-mcp` image, and their tests.
 - Own build (`CMakeLists.txt`, `scripts/build-components-docker.sh`), CI and image publishing.
+- **`component_mcp` serves 20 tools.** Besides `list_databases`, `list_tables`, `describe_table`, `run_query`, `ping` and `server_info`, it serves the tool pack's other catalog tools with mysql-mcp-server's names, descriptions and arguments: `show_create_table`, `list_indexes`, `list_views`, `list_triggers`, `list_procedures`, `list_functions`, `list_partitions`, `database_size`, `table_size`, `foreign_keys`, `list_status`, `list_variables`, `vector_info` and `search_schema`. `process_list` is not served: mysql-mcp-server offers it only when enabled.
 
 Changes made in askdba/myvector before the move, not yet released there (moved from its changelog):
 

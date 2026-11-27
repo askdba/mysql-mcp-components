@@ -16,8 +16,8 @@
 //   - 127.0.0.1 by default; TLS (mcp_http.ssl_cert / ssl_key) required off loopback;
 //   - Authorization: Bearer <token>, mapped to an account (user@host): mcp_http.token_sha256 to
 //     mcp_http.account, or the token table mysql.mcp_tokens (mcp_tokens.sql);
-//   - the core tools (list_databases, list_tables, describe_table, run_query, ping,
-//     server_info);
+//   - 20 tools with mysql-mcp-server's names: run_query, ping, server_info, and the catalog
+//     tools of the mysql_mcp tool pack (list_databases, describe_table, search_schema, ...);
 //   - each tool call runs in a "local" command-service session that impersonates the
 //     account, announced with connection audit events so that component_mcp_guard (and
 //     audit log plugins) see it: such sessions start unaudited.
@@ -1509,6 +1509,121 @@ std::optional<std::string> string_arg(const rapidjson::Value &params, const char
   return std::string(args[key].GetString(), args[key].GetStringLength());
 }
 
+// The catalog tools served by one mysql_mcp procedure each, with mysql-mcp-server's names,
+// descriptions and arguments (all strings). A missing or empty optional argument is passed as
+// NULL, as mysql-mcp-server does. process_list is not served: mysql-mcp-server offers it only
+// when enabled (MYSQL_MCP_PROCESS_ADMIN), since it shows other sessions' statements.
+struct PackArg {
+  const char *name;
+  bool required;
+};
+struct PackTool {
+  const char *name, *description, *procedure;
+  std::vector<PackArg> args;
+};
+
+const std::vector<PackTool> &pack_tools() {
+  static const std::vector<PackTool> tools = {
+      {"show_create_table", "Show the CREATE TABLE statement for a table", "show_create_table",
+       {{"database", true}, {"table", true}}},
+      {"list_indexes", "List indexes on a table", "list_indexes",
+       {{"database", true}, {"table", true}}},
+      {"list_views", "List views in a database", "list_views", {{"database", true}}},
+      {"list_triggers", "List triggers in a database", "list_triggers", {{"database", true}}},
+      {"list_procedures", "List stored procedures in a database", "list_procedures",
+       {{"database", true}}},
+      {"list_functions", "List stored functions in a database", "list_functions",
+       {{"database", true}}},
+      {"list_partitions", "List partitions of a table", "list_partitions",
+       {{"database", true}, {"table", true}}},
+      {"database_size", "Get size information for databases", "database_size",
+       {{"database", false}}},
+      {"table_size", "Get size information for tables", "table_size",
+       {{"database", true}, {"table", false}}},
+      {"foreign_keys", "List foreign key constraints", "foreign_keys",
+       {{"database", true}, {"table", false}}},
+      {"list_status", "List MySQL server status variables", "list_status", {{"pattern", false}}},
+      {"list_variables", "List MySQL server configuration variables", "list_variables",
+       {{"pattern", false}}},
+      {"vector_info", "List vector columns and their properties in a database", "vector_columns",
+       {{"database", true}, {"table", false}}},
+  };
+  return tools;
+}
+
+const PackTool *find_pack_tool(const std::string &name) {
+  for (const PackTool &t : pack_tools())
+    if (name == t.name) return &t;
+  return nullptr;
+}
+
+// Whether the tools/call arguments have key, whatever its type.
+bool has_arg(const rapidjson::Value &params, const char *key) {
+  return params.HasMember("arguments") && params["arguments"].IsObject() &&
+         params["arguments"].HasMember(key);
+}
+
+// The SQL argument list for a pack tool, or nullopt after writing the tool error to out.
+std::optional<std::string> pack_args(const PackTool &tool, const rapidjson::Value &params,
+                                     Json &out) {
+  std::string args;
+  for (const PackArg &a : tool.args) {
+    const auto value = string_arg(params, a.name);
+    if (!value && a.required) {
+      tool_result(out, std::string(tool.name) + " needs a string argument " + a.name, true);
+      return std::nullopt;
+    }
+    if (!value && has_arg(params, a.name)) {
+      tool_result(out, std::string(tool.name) + "'s argument " + a.name + " must be a string", true);
+      return std::nullopt;
+    }
+    if (!args.empty()) args += ", ";
+    args += value && (a.required || !value->empty()) ? text_literal(*value) : "NULL";
+  }
+  return args;
+}
+
+// search_schema, as mysql-mcp-server: tables matching the pattern, then columns, up to kMaxRows
+// matches in all.
+void search_schema(const rapidjson::Value &params, Json &out, const std::string &account) {
+  const auto pattern = string_arg(params, "pattern");
+  if (!pattern || pattern->empty()) {
+    tool_result(out, "search_schema needs a non-empty string argument pattern", true);
+    return;
+  }
+  const auto database = string_arg(params, "database");
+  if (!database && has_arg(params, "database")) {
+    tool_result(out, "search_schema's argument database must be a string", true);
+    return;
+  }
+  const std::string db = database && !database->empty() ? text_literal(*database) : "NULL";
+  SqlResult tables = run_as(account, "CALL mysql_mcp.search_tables(" + text_literal(*pattern) +
+                                         ", " + db + ", " + std::to_string(kMaxRows) + ")");
+  if (!tables.ok) {
+    tool_result(out, "Error " + std::to_string(tables.sql_errno) + ": " + tables.error, true);
+    return;
+  }
+  const size_t left = kMaxRows - std::min<size_t>(tables.rows.Size(), kMaxRows);
+  Json reply(rapidjson::kObjectType);
+  auto &a = reply.GetAllocator();
+  reply.AddMember("tables", rapidjson::Value(tables.rows, a), a);
+  bool truncated = tables.truncated || left == 0;
+  rapidjson::Value columns(rapidjson::kArrayType);
+  if (left > 0) {
+    SqlResult cols = run_as(account, "CALL mysql_mcp.search_columns(" + text_literal(*pattern) +
+                                         ", " + db + ", " + std::to_string(left) + ")");
+    if (!cols.ok) {
+      tool_result(out, "Error " + std::to_string(cols.sql_errno) + ": " + cols.error, true);
+      return;
+    }
+    columns.CopyFrom(cols.rows, a);
+    truncated = truncated || cols.truncated || cols.rows.Size() >= left;
+  }
+  reply.AddMember("columns", columns, a);
+  reply.AddMember("truncated", truncated, a);
+  tool_result(out, to_string(reply), false);
+}
+
 void call_tool(const rapidjson::Value &params, Json &out, const std::string &account) {
   const std::string name =
       params.HasMember("name") && params["name"].IsString() ? params["name"].GetString() : "";
@@ -1560,6 +1675,13 @@ void call_tool(const rapidjson::Value &params, Json &out, const std::string &acc
         "IFNULL(DATABASE(), '') AS current_database, "  // "" as mysql-mcp-server: no default db
         "@@character_set_server AS character_set, "
         "@@collation_server AS collation, @@max_connections AS max_connections";
+  } else if (name == "search_schema") {
+    search_schema(params, out, account);
+    return;
+  } else if (const PackTool *tool = find_pack_tool(name)) {
+    const auto args = pack_args(*tool, params, out);
+    if (!args) return;
+    sql = std::string("CALL mysql_mcp.") + tool->procedure + "(" + *args + ")";
   } else {
     tool_result(out, "unknown tool: " + name, true);
     return;
@@ -1602,6 +1724,40 @@ void list_tools(Json &out) {
 #undef MCP_READ_ONLY
   Json tools;
   tools.Parse(kTools);
+  auto &a = tools.GetAllocator();
+  auto &list = tools["tools"];
+  const auto string_schema = [&a] {
+    rapidjson::Value v(rapidjson::kObjectType);
+    v.AddMember("type", "string", a);
+    return v;
+  };
+  const auto read_only = [&a] {
+    rapidjson::Value v(rapidjson::kObjectType);
+    v.AddMember("readOnlyHint", true, a);
+    v.AddMember("idempotentHint", true, a);
+    return v;
+  };
+  // One tool whose arguments are all strings.
+  const auto add = [&](const char *name, const char *description,
+                       const std::vector<PackArg> &args) {
+    rapidjson::Value tool(rapidjson::kObjectType), props(rapidjson::kObjectType),
+        required(rapidjson::kArrayType), schema(rapidjson::kObjectType);
+    for (const PackArg &arg : args) {
+      props.AddMember(rapidjson::StringRef(arg.name), string_schema(), a);
+      if (arg.required) required.PushBack(rapidjson::StringRef(arg.name), a);
+    }
+    schema.AddMember("type", "object", a);
+    schema.AddMember("properties", props, a);
+    if (!required.Empty()) schema.AddMember("required", required, a);
+    tool.AddMember("name", rapidjson::StringRef(name), a);
+    tool.AddMember("description", rapidjson::StringRef(description), a);
+    tool.AddMember("annotations", read_only(), a);
+    tool.AddMember("inputSchema", schema, a);
+    list.PushBack(tool, a);
+  };
+  for (const PackTool &t : pack_tools()) add(t.name, t.description, t.args);
+  add("search_schema", "Find tables and columns matching a pattern across databases",
+      {{"pattern", true}, {"database", false}});
   out.AddMember("result", rapidjson::Value(tools, out.GetAllocator()), out.GetAllocator());
 }
 
