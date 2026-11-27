@@ -52,6 +52,13 @@ check_settings() {
 			{ [ -z "${MYSQL_MCP_HTTP_SSL_CERT:-}" ] || [ -z "${MYSQL_MCP_HTTP_SSL_KEY:-}" ]; }; then
 			mcp_error "set MYSQL_MCP_HTTP_SSL_CERT and MYSQL_MCP_HTTP_SSL_KEY together"
 		fi
+		# Files given explicitly must be readable by mysqld (user mysql) now: setup runs only once,
+		# so a missing mount found when component_mcp loads them could not be fixed by a restart.
+		# (Unset, the server's own certificate is used, which initialization creates.)
+		local f
+		for f in "${MYSQL_MCP_HTTP_SSL_CERT:-}" "${MYSQL_MCP_HTTP_SSL_KEY:-}"; do
+			[ -z "$f" ] || gosu mysql test -r "$f" || mcp_error "$f is not a file mysqld (user mysql) can read"
+		done
 	fi
 }
 

@@ -188,6 +188,10 @@ if docker run --rm --entrypoint test "$IMAGE" -f /usr/lib64/mysql/plugin/compone
 	refused "a short MYSQL_MCP_HTTP_TOKEN" "MYSQL_MCP_HTTP_TOKEN must be at least 32 characters"
 	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_HTTP_TOKEN="$TOKEN" "$IMAGE" >/dev/null
 	refused "MYSQL_MCP_HTTP_TOKEN without MYSQL_MCP_USER" "MYSQL_MCP_HTTP_TOKEN needs MYSQL_MCP_USER"
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
+		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" -e MYSQL_MCP_HTTP_SSL_CERT=/certs/missing.pem \
+		-e MYSQL_MCP_HTTP_SSL_KEY=/certs/missing-key.pem "$IMAGE" >/dev/null
+	refused "a certificate file that does not exist" "/certs/missing.pem is not a file mysqld (user mysql) can read"
 else
 	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
 		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" "$IMAGE" >/dev/null
