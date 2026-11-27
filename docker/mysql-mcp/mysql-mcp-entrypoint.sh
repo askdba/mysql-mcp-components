@@ -57,7 +57,8 @@ check_settings() {
 		# (Unset, the server's own certificate is used, which initialization creates.)
 		local f
 		for f in "${MYSQL_MCP_HTTP_SSL_CERT:-}" "${MYSQL_MCP_HTTP_SSL_KEY:-}"; do
-			[ -z "$f" ] || gosu mysql test -r "$f" || mcp_error "$f is not a file mysqld (user mysql) can read"
+			[ -z "$f" ] || gosu mysql sh -c 'test -f "$1" && test -r "$1"' _ "$f" ||
+				mcp_error "$f is not a file mysqld (user mysql) can read"
 		done
 	fi
 }

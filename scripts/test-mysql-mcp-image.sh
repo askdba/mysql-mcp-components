@@ -192,6 +192,9 @@ if docker run --rm --entrypoint test "$IMAGE" -f /usr/lib64/mysql/plugin/compone
 		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" -e MYSQL_MCP_HTTP_SSL_CERT=/certs/missing.pem \
 		-e MYSQL_MCP_HTTP_SSL_KEY=/certs/missing-key.pem "$IMAGE" >/dev/null
 	refused "a certificate file that does not exist" "/certs/missing.pem is not a file mysqld (user mysql) can read"
+	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
+		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" -e MYSQL_MCP_HTTP_SSL_CERT=/etc -e MYSQL_MCP_HTTP_SSL_KEY=/etc "$IMAGE" >/dev/null
+	refused "a certificate path that is a directory" "/etc is not a file mysqld (user mysql) can read"
 else
 	docker run -d --name "$CNAME_PLAIN" -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=x \
 		-e MYSQL_MCP_HTTP_TOKEN="$TOKEN" "$IMAGE" >/dev/null

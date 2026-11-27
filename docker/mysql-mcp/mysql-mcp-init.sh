@@ -84,10 +84,14 @@ INSERT INTO mysql.mcp_tokens (token_sha256, account, comment)
 INSTALL COMPONENT 'file://component_mcp'
   SET PERSIST mcp_http.port = ${MYSQL_MCP_HTTP_PORT:-33480},
       PERSIST mcp_http.bind_address = $(_mcp_sql_literal "$_mcp_bind")"
-	case "$_mcp_bind" in
-	127.* | ::1 | localhost) _mcp_tls=${MYSQL_MCP_HTTP_SSL_CERT:+yes} ;;
-	*) _mcp_tls=yes ;;
-	esac
+	# Loopback as component_mcp decides it: a literal IPv4 127.0.0.0/8 address, ::1 or localhost.
+	# Anything else needs TLS (a host name like 127.example.com included).
+	_mcp_octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+	_mcp_tls=yes
+	if [ "$_mcp_bind" = localhost ] || [ "$_mcp_bind" = ::1 ] ||
+		[[ "$_mcp_bind" =~ ^127\.$_mcp_octet\.$_mcp_octet\.$_mcp_octet$ ]]; then
+		_mcp_tls=${MYSQL_MCP_HTTP_SSL_CERT:+yes}
+	fi
 	if [ "$_mcp_tls" = yes ]; then
 		_mcp_datadir=$(docker_process_sql -N -B <<<"SELECT @@datadir")
 		_mcp_datadir=${_mcp_datadir%/}
@@ -97,5 +101,5 @@ INSTALL COMPONENT 'file://component_mcp'
 	fi
 	docker_process_sql --database=mysql <<<"$_mcp_http"
 fi
-unset _mcp_hash _mcp_bind _mcp_http _mcp_tls _mcp_datadir
+unset _mcp_hash _mcp_bind _mcp_http _mcp_tls _mcp_datadir _mcp_octet
 unset _mcp_backslash_escapes _mcp_roots _mcp_root _mcp_settings _mcp_account _mcp_grants _mcp_dbs _mcp_db _mcp_pattern
