@@ -103,6 +103,13 @@ expect "list_status with a pattern" "$(call list_status '{"pattern":"Uptime"}')"
 expect "list_triggers, list_procedures, list_functions (none here)" "$(call list_triggers '{"database":"d3"}' | grep -c '"isError":false') $(call list_procedures '{"database":"d3"}' | grep -c '"isError":false') $(call list_functions '{"database":"d3"}' | grep -c '"isError":false')" "^1 1 1$"
 expect "vector_info (no vector columns here)" "$(call vector_info '{"database":"d3"}')" 'rows\\":\[\].*"isError":false'
 expect "search_schema: tables and columns" "$(call search_schema '{"pattern":"%parent%","database":"d3"}')" 'tables\\":\[.*parent.*columns\\":\[.*parent_id.*truncated\\":false.*"isError":false'
+# The match limit: exactly 1000 matches are complete, 1001 are truncated to 1000.
+cols=$(seq -f 'zq_%04g INT' 1 1000 | paste -sd, -)
+sql "CREATE TABLE d3.wide ($cols)"
+search_zq() { call search_schema '{"pattern":"zq\\_%","database":"d3"}'; }
+expect "search_schema: exactly 1000 matches are not truncated" "$(search_zq | grep -o 'COLUMN_NAME\\":\\"zq_' | wc -l | tr -d ' ') $(search_zq | grep -o 'truncated\\":[a-z]*')" '^1000 truncated\\":false$'
+sql "CREATE TABLE d3.wide2 (zq_extra INT)"
+expect "search_schema: 1001 matches are truncated to 1000" "$(search_zq | grep -o 'COLUMN_NAME\\":\\"zq_' | wc -l | tr -d ' ') $(search_zq | grep -o 'truncated\\":[a-z]*')" '^1000 truncated\\":true$'
 expect "search_schema without a pattern is a tool error" "$(call search_schema '{}')" 'needs a non-empty string argument pattern.*"isError":true'
 expect "a pack tool without its required argument is a tool error" "$(call list_views '{}')" 'list_views needs a string argument database.*"isError":true'
 expect "a non-string optional argument is a tool error" "$(call table_size '{"database":"d3","table":7}')" "table_size's argument table must be a string.*\"isError\":true"

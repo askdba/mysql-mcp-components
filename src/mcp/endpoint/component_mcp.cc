@@ -1597,27 +1597,33 @@ void search_schema(const rapidjson::Value &params, Json &out, const std::string 
     return;
   }
   const std::string db = database && !database->empty() ? text_literal(*database) : "NULL";
+  // Each search asks for one match more than fits, so that `truncated` means matches were left
+  // out (exactly kMaxRows matches are complete); the extra one is not returned.
   SqlResult tables = run_as(account, "CALL mysql_mcp.search_tables(" + text_literal(*pattern) +
-                                         ", " + db + ", " + std::to_string(kMaxRows) + ")");
+                                         ", " + db + ", " + std::to_string(kMaxRows + 1) + ")");
   if (!tables.ok) {
     tool_result(out, "Error " + std::to_string(tables.sql_errno) + ": " + tables.error, true);
     return;
   }
+  bool truncated = tables.truncated;  // more than kMaxRows tables: only kMaxRows were kept
   const size_t left = kMaxRows - std::min<size_t>(tables.rows.Size(), kMaxRows);
   Json reply(rapidjson::kObjectType);
   auto &a = reply.GetAllocator();
   reply.AddMember("tables", rapidjson::Value(tables.rows, a), a);
-  bool truncated = tables.truncated || left == 0;
   rapidjson::Value columns(rapidjson::kArrayType);
-  if (left > 0) {
+  if (!truncated) {
+    // Also when the tables filled the reply: one more column match then means truncation.
     SqlResult cols = run_as(account, "CALL mysql_mcp.search_columns(" + text_literal(*pattern) +
-                                         ", " + db + ", " + std::to_string(left) + ")");
+                                         ", " + db + ", " + std::to_string(left + 1) + ")");
     if (!cols.ok) {
       tool_result(out, "Error " + std::to_string(cols.sql_errno) + ": " + cols.error, true);
       return;
     }
+    if (cols.truncated || cols.rows.Size() > left) {
+      truncated = true;
+      while (cols.rows.Size() > left) cols.rows.PopBack();
+    }
     columns.CopyFrom(cols.rows, a);
-    truncated = truncated || cols.truncated || cols.rows.Size() >= left;
   }
   reply.AddMember("columns", columns, a);
   reply.AddMember("truncated", truncated, a);
