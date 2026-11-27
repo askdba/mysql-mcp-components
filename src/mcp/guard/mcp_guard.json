@@ -1,6 +1,6 @@
 {
   "name": "component_mcp_guard",
-  "description": "Server-side guard for mysql-mcp-server sessions (RFC 0001, Phase 0 skeleton)",
+  "description": "Enforces MCP policy on mysql-mcp-server sessions inside mysqld (RFC 0001)",
   "license": "GPL",
-  "version": "0.0.1"
+  "version": "1.0.0-rc.1"
 }

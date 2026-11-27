@@ -2,5 +2,5 @@
   "name": "component_mcp",
   "description": "MCP Streamable HTTP endpoint inside mysqld, for mysql-mcp-server tools (RFC 0001)",
   "license": "GPL",
-  "version": "0.1.0"
+  "version": "1.0.0-rc.1"
 }

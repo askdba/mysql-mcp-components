@@ -2,11 +2,13 @@
 
 Server-side components for [mysql-mcp-server](https://github.com/askdba/mysql-mcp-server), designed in its [RFC 0001](https://github.com/askdba/mysql-mcp-server/blob/main/docs/rfc/0001-mysql-component-architecture.md). `scripts/build-components-docker.sh mysql-<version> <out-dir>` builds `component_mcp_guard.so` for that exact MySQL release (add `BUILD_ENDPOINT=ON` for `component_mcp` on 26.10). They were developed in [askdba/myvector](https://github.com/askdba/myvector), where their earlier issues and pull requests live.
 
-| Component | Status | Servers |
+Release **1.0.0-rc.1** (the components share the repository's version; the tool pack has its own).
+
+| Component | What it is | Servers |
 |---|---|---|
-| `component_mcp_guard` | Phase 2: identity, read-only and schema enforcement, time limit, error log, status variables | MySQL 8.4, 9.7, 26.10 |
-| `mysql_mcp` SQL tool pack ([`sql/mcp/`](../sql/mcp)) | 1.0.0 | MySQL 8.0 to 26.10, MariaDB 11.4, 12.3 |
-| `component_mcp` | **Phase 4 spike** (not for production): an MCP endpoint inside `mysqld` | MySQL 26.10 |
+| `component_mcp_guard` | Enforces MCP policy inside `mysqld`: identity, read-only and schema rules, time limit, error and audit logs, status variables | MySQL 8.4, 9.7, 26.10 |
+| `mysql_mcp` SQL tool pack ([`sql/mcp/`](../sql/mcp)) | Stored procedures for the catalog tools, version 1.0.0 | MySQL 8.0 to 26.10, MariaDB 11.4, 12.3 |
+| `component_mcp` | An MCP Streamable HTTP endpoint inside `mysqld`, with 20 tools; requires `component_mcp_guard` | MySQL 26.10 |
 
 **Maintainer:** [@askdba](https://github.com/askdba) owns the C++ code of these components (RFC 0001 §10). `.github/CODEOWNERS` routes reviews to them.
 
@@ -193,7 +195,7 @@ The option is `mcp.read_only`, `mcp.deny_system_schemas`, `mcp.allowed_schemas` 
 - `mcp.allowed_schemas` limits **table access**, not catalog metadata: `information_schema` and `SHOW` still list what the account's grants allow.
 - With `mcp.deny_system_schemas = ON`, mysql-mcp-server's opt-in `slow_query_log` tool (which reads `mysql.slow_log`) is denied.
 - The schema rules apply to a statement's **base tables**. A view in an allowed schema over a table in another schema (or in `mysql`) is denied, nested views included. A view in another schema whose base tables are all allowed is allowed.
-- **Stored functions and triggers: their reads are not checked by the schema rules.** Their statements run on tables the calling statement has already locked, so the server raises no table access event for them. For example, with `mcp.allowed_schemas = 'd1'`, `SELECT d1.f()` returns data from `d2` if `d1.f()` reads `d2`. Writes inside them are still refused by `mcp.read_only` (a nested statement check), and stored procedures are not affected (`CALL` is limited to `mysql_mcp` under `mcp.read_only`, and a procedure's statements raise their own events). Control this with grants: don't give MCP accounts `EXECUTE` on schemas with functions that read data they must not see. A `SQL SECURITY INVOKER` function runs with the account's own grants, but `mcp.allowed_schemas` doesn't limit it. Triggers need no `EXECUTE`: they run, with their definer's privileges, when a statement writes their table. Under `mcp.read_only` (the default) MCP sessions cannot write, so no trigger runs for them. If you turn `mcp.read_only` off, don't give MCP accounts write grants on tables whose triggers read data outside the account's allowed schemas, and review trigger definers. `scripts/test-mcp-guard.sh` keeps a check that shows this, so a server change is noticed ([#247](https://github.com/askdba/myvector/issues/247)).
+- **Stored functions and triggers: their reads are not checked by the schema rules.** Their statements run on tables the calling statement has already locked, so the server raises no table access event for them. For example, with `mcp.allowed_schemas = 'd1'`, `SELECT d1.f()` returns data from `d2` if `d1.f()` reads `d2`. Writes inside them are still refused by `mcp.read_only` (a nested statement check), and stored procedures are not affected (`CALL` is limited to `mysql_mcp` under `mcp.read_only`, and a procedure's statements raise their own events). Control this with grants: don't give MCP accounts `EXECUTE` on schemas with functions that read data they must not see. A `SQL SECURITY INVOKER` function runs with the account's own grants, but `mcp.allowed_schemas` doesn't limit it. Triggers need no `EXECUTE`: they run, with their definer's privileges, when a statement writes their table. Under `mcp.read_only` (the default) MCP sessions cannot write, so no trigger runs for them. If you turn `mcp.read_only` off, don't give MCP accounts write grants on tables whose triggers read data outside the account's allowed schemas, and review trigger definers. `scripts/test-mcp-guard.sh` keeps a check that shows this, so a server change is noticed ([#2](https://github.com/askdba/mysql-mcp-components/issues/2): a MySQL change is needed for the guard to see these reads).
 - A multi-statement packet is checked statement by statement: each statement in it raises its own events.
 - **Statements whose table reads raise no table access events are refused** while `mcp.deny_system_schemas` is on (the default) or `mcp.allowed_schemas` is set. The server raises table access events only for `SELECT`, data changes, `ANALYZE` and `HANDLER READ`, so these statements would otherwise read any table unseen: a subquery in `SET`, `DO`, a `CALL` argument or `SHOW ... WHERE`, and `CHECK TABLE` / `CHECKSUM TABLE`. Read through `SELECT` instead (`SELECT ... INTO @x`). The refusal names the schema rule in effect. `SET`, `SHOW` and `CALL` without subqueries are unaffected.
 - With `lower_case_table_names` 1 or 2, the system schema names are compared case-insensitively, as the server compares them.
@@ -233,9 +235,9 @@ Most of the remaining cost is MySQL's event dispatch, which every statement pays
 
 The guard therefore keeps static subscriptions. A lower cost would need a server change, for example letting consumers declare the subclasses they want so the server skips building events no one reads, or a per-session subscription.
 
-## component_mcp (Phase 4 spike)
+## component_mcp
 
-An MCP **Streamable HTTP** endpoint (JSON-RPC 2.0 over `POST /mcp`) inside `mysqld`. It runs on MySQL Router's HTTP server, the libraries `component_mysql_rest_service` links (RFC 0001 §5.3). This is the Phase 4 build spike and is **not for production**. It is limited to the following:
+An MCP **Streamable HTTP** endpoint (JSON-RPC 2.0 over `POST /mcp`) inside `mysqld`. It runs on MySQL Router's HTTP server, the libraries `component_mysql_rest_service` links (RFC 0001 §5.3). It passed the RFC 0001 §10 go/no-go (77 hours of fuzzing under ASAN, a security review of its authentication, MCP conformance against two clients) and the Phase 5 hardening. What it does:
 
 - **Network and auth:** `127.0.0.1` by default. Plain HTTP is allowed only on loopback: with `mcp_http.bind_address` set to any other address the install fails unless `mcp_http.ssl_cert` and `mcp_http.ssl_key` are set, and then the endpoint serves HTTPS (TLS 1.2+, Router's TLS context). Bearer tokens map to accounts: one token in `mcp_http.token_sha256` (to `mcp_http.account`), and any number in the token table `mysql.mcp_tokens` (below).
   - **Connections:** at most `mcp_http.max_connections` are open (default 64), counted from accept, before TLS or authentication. A connection that does not complete a request within `mcp_http.connection_timeout_seconds` (default 30) of its start, or of its last reply, is closed, so connections that send nothing, or that never finish the TLS handshake or the request headers, free their slot by then ([#269](https://github.com/askdba/myvector/issues/269)). A client opening connections faster than that can still fill the limit, so off loopback allow only expected clients to reach the port (firewall or security group). The timeout is enforced through a small change to Router's HTTP server, which `component_mcp` builds from the server tree with an edited copy of `http/server/connection.h` (`src/mcp/endpoint/router_connection_edits.cmake`; the tree is not modified).
@@ -361,7 +363,7 @@ Facts recorded for Phase 5:
 - **Connection limits:** `max_user_connections` is not enforced for these sessions, so the endpoint has its own per-account cap (`mcp_http.max_sessions_per_account`, Phase 5). They count against `max_connections`, and by default the command service lets them exceed it; the endpoint turns that off (`MYSQL_COMMAND_BYPASS_MAX_CONNECTIONS`, 26.10), so a call fails with error 1040 when the server is full.
 - **Auth backends:** Router's `http_auth_realm` / `http_auth_backend` support Basic auth only, so the endpoint checks bearer tokens itself (SHA-256, constant-time compare).
 
-### Spike measurements (MySQL 26.10.0, arm64, 16 cores)
+### Build measurements from the Phase 4 spike (MySQL 26.10.0, arm64, 16 cores)
 
 | | `component_mcp` | `component_mysql_rest_service` |
 |---|---|---|

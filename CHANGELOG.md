@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-11-27
+
+The first release from this repository.
+
+- **Version 1.0.0-rc.1** for `component_mcp_guard` and `component_mcp` (their manifests, and the `serverInfo` version `component_mcp` reports, which was 0.1.0); the docs no longer call the endpoint a spike.
+
 - Moved from askdba/myvector with history: `component_mcp_guard`, `component_mcp`, the `mysql_mcp` SQL tool pack, the `mysql-mcp` image, and their tests.
 - Own build (`CMakeLists.txt`, `scripts/build-components-docker.sh`), CI and image publishing.
 - **`component_mcp` in the `mysql-mcp:26.10` image.** `MYSQL_MCP_HTTP_TOKEN` (with `MYSQL_MCP_USER`) installs it at first start: the token's SHA-256 goes into `mysql.mcp_tokens`, and the endpoint listens on `0.0.0.0:33480` over HTTPS with the server's own certificate (`MYSQL_MCP_HTTP_PORT`, `MYSQL_MCP_HTTP_BIND_ADDRESS`, `MYSQL_MCP_HTTP_SSL_CERT` / `_KEY`), settings persisted. `component_mcp` gets its manifest, `mcp.json`. Images are now built from components compiled on native amd64 and arm64 runners.
