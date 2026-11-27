@@ -1620,7 +1620,7 @@ constexpr const char *kProtocolVersions[] = {"2025-11-25", "2025-06-18", "2025-0
                                              "2024-11-05"};
 constexpr const char kStatelessVersion[] = "2026-07-28";
 constexpr const char kServerName[] = "component_mcp";
-constexpr const char kServerVersion[] = "0.1.0";
+constexpr const char kServerVersion[] = "1.0.0-rc.1";  // the repository release
 constexpr const char kMetaProtocolVersion[] = "io.modelcontextprotocol/protocolVersion";
 constexpr const char kMetaClientCapabilities[] = "io.modelcontextprotocol/clientCapabilities";
 constexpr const char kMetaClientInfo[] = "io.modelcontextprotocol/clientInfo";

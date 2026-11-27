@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end test of component_mcp (RFC 0001 Phase 4 spike) with component_mcp_guard, on the
+# End-to-end test of component_mcp (RFC 0001) with component_mcp_guard, on the
 # official MySQL 26.10 image: bearer auth, the MCP handshake, both tools, and the Phase 4 exit
 # criterion (the guard's policy reaches run_query in the impersonated sessions).
 #

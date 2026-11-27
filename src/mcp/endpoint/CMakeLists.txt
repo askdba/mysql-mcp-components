@@ -1,4 +1,4 @@
-# component_mcp: Phase 4 spike of RFC 0001 (askdba/mysql-mcp-server).
+# component_mcp: the MCP endpoint inside mysqld (RFC 0001, askdba/mysql-mcp-server).
 # An MCP endpoint inside mysqld on MySQL Router's HTTP server.
 # Built in-tree like component_mysql_rest_service; needs the Router HTTP targets, which
 # MRS adds (it is configured after this directory; targets resolve at generate time).
