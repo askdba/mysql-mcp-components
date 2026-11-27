@@ -102,6 +102,14 @@ jobs:
       - name: MCP conformance (MCP Inspector CLI, Python SDK client)
         run: scripts/test-mcp-conformance.sh mysql:26.10.0 dist/mcp-26.10.0
 
+      - name: mysql-mcp image with component_mcp
+        run: |
+          cp dist/mcp-26.10.0/component_mcp_guard.so component_mcp_guard-amd64.so
+          cp dist/mcp-26.10.0/component_mcp.so component_mcp-amd64.so
+          docker build -f docker/mysql-mcp/Dockerfile --build-arg MYSQL_VERSION=26.10.0 \
+            --build-arg TARGETARCH=amd64 -t mysql-mcp-smoke:26.10.0-endpoint .
+          scripts/test-mysql-mcp-image.sh mysql-mcp-smoke:26.10.0-endpoint
+
   mcp-tool-pack:
     # The mysql_mcp SQL tool pack: install, re-install, and parity of every procedure with
     # mysql-mcp-server's own query, as root and as an EXECUTE-only MCP account.

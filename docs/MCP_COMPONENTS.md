@@ -31,7 +31,7 @@ The guard requires `component_reference_cache` (loaded by the server at startup 
 
 ### Docker images (mysql-mcp)
 
-`ghcr.io/askdba/mysql-mcp:<8.4|9.7|26.10>` (amd64, arm64; also tagged with the exact release, such as `8.4.13`) is the official `mysql` image of the release the component was built for, with `component_mcp_guard` and the `mysql_mcp` SQL tool pack. It is separate from the MyVector images. On first start, with an empty data directory, it installs both, grants `MCP_ADMIN` to the root accounts, and reads these settings:
+`ghcr.io/askdba/mysql-mcp:<8.4|9.7|26.10>` (amd64, arm64; also tagged with the exact release, such as `8.4.13`) is the official `mysql` image of the release the component was built for, with `component_mcp_guard` and the `mysql_mcp` SQL tool pack, and on 26.10 `component_mcp`, the MCP endpoint (off unless `MYSQL_MCP_HTTP_TOKEN` is set). On first start, with an empty data directory, it installs both, grants `MCP_ADMIN` to the root accounts, and reads these settings:
 
 | Variable | Effect |
 |---|---|
@@ -39,6 +39,10 @@ The guard requires `component_reference_cache` (loaded by the server at startup 
 | `MYSQL_MCP_DATABASES` | Comma-separated databases the account may read. The default is `MYSQL_DATABASE`. |
 | `MYSQL_MCP_ALLOWED_SCHEMAS` | Persisted as `mcp.allowed_schemas`. |
 | `MYSQL_MCP_MAX_EXECUTION_TIME_MS` | Persisted as `mcp.max_execution_time_ms`. |
+| `MYSQL_MCP_HTTP_TOKEN` | 26.10 only. Installs `component_mcp` and maps this bearer token (at least 32 characters, e.g. `openssl rand -hex 32`) to `MYSQL_MCP_USER`, which it requires: only its SHA-256 is stored, in `mysql.mcp_tokens`. More tokens can be added to that table later. On an image without `component_mcp` the container does not start. |
+| `MYSQL_MCP_HTTP_PORT` | The endpoint's port, default 33480 (exposed). |
+| `MYSQL_MCP_HTTP_BIND_ADDRESS` | Default `0.0.0.0`, so the endpoint is reachable from outside the container, over HTTPS. Plain HTTP only on a loopback address. |
+| `MYSQL_MCP_HTTP_SSL_CERT`, `MYSQL_MCP_HTTP_SSL_KEY` | PEM files for HTTPS, set together. The default is the server's own certificate in the data directory (`server-cert.pem`, self-signed unless replaced), so clients must trust it or skip verification. |
 
 The other settings keep their defaults (read-only on). The settings are checked before the data directory is initialized, and a container with an invalid combination does not start. Once the data directory exists they are not used or checked again. For example, `MYSQL_MCP_USER` must differ from `MYSQL_USER` (or the user in `MYSQL_USER_FILE`), because the official entrypoint gives that account all privileges on `MYSQL_DATABASE`. The health check asks mysqld for the port it uses (command line and option files, as mysqld resolves them) and pings it without logging in as root. The official image's own variables (`MYSQL_ROOT_PASSWORD`, `MYSQL_DATABASE`, ...) work as usual.
 
@@ -48,7 +52,19 @@ docker run -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=shop 
 MYSQL_DSN='mcp:mcp-secret@tcp(127.0.0.1:3306)/shop' mysql-mcp-server
 ```
 
-The images are built and published on each release of this repository (`docker-publish.yml`, on a `v*` tag). `scripts/test-mysql-mcp-image.sh <image>` tests the first-start setup, and CI (`ci.yml`, job `mcp-guard`) runs it on each version.
+With the endpoint (26.10), an MCP client talks to `mysqld` directly, with no mysql-mcp-server:
+
+```sh
+TOKEN=$(openssl rand -hex 32)
+docker run -d -p 33480:33480 -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=shop \
+  -e MYSQL_MCP_USER=mcp -e MYSQL_MCP_PASSWORD=mcp-secret -e MYSQL_MCP_HTTP_TOKEN="$TOKEN" \
+  ghcr.io/askdba/mysql-mcp:26.10
+# MCP Streamable HTTP endpoint: https://<host>:33480/mcp, header "Authorization: Bearer $TOKEN"
+```
+
+The token is passed in the environment, as the official image does for `MYSQL_ROOT_PASSWORD`: anyone who can inspect the container can read it. Rotate it by inserting a new hash into `mysql.mcp_tokens` and deleting the old row (see [Token table](#token-table)).
+
+The images are built and published on each release of this repository (`docker-publish.yml`, on a `v*` tag). `scripts/test-mysql-mcp-image.sh <image>` tests the first-start setup, and the endpoint where the image has it. CI runs it on each version (`ci.yml`, job `mcp-guard`) and on the 26.10 image with `component_mcp` (job `mcp-endpoint`).
 
 ### MCP sessions
 

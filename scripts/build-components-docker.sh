@@ -9,7 +9,7 @@
 #   e.g. scripts/build-components-docker.sh mysql-8.4.11 dist/mcp-8.4.11
 #        BUILD_ENDPOINT=ON scripts/build-components-docker.sh mysql-26.10.0 dist/mcp-26.10.0
 # Output in out-dir: component_mcp_guard.so, mcp_guard.json, component_mcp_session_probe.so,
-# and component_mcp.so with BUILD_ENDPOINT=ON. The MySQL source tree is kept in
+# and component_mcp.so and mcp.json with BUILD_ENDPOINT=ON. The MySQL source tree is kept in
 # mysql-server-<tag>/ for reuse (configured per architecture in bld-<arch>/).
 set -euo pipefail
 
@@ -84,7 +84,7 @@ docker run --rm \
 
     OUT="/workspace/$OUTPUT_DIR"
     mkdir -p "$OUT"
-    rm -f "$OUT/component_mcp.so"
+    rm -f "$OUT/component_mcp.so" "$OUT/mcp.json"
     cp "$BUILD/component_mcp_guard.so" "$BUILD/component_mcp_session_probe.so" \
        /workspace/src/mcp/guard/mcp_guard.json "$OUT/"
 
@@ -94,7 +94,7 @@ docker run --rm \
       cp -r /workspace/src/mcp/endpoint "$MYSQL_SRC/components/mcp"
       cmake -S "$MYSQL_SRC" -B "$MYSQL_BLD" >/dev/null  # components are globbed
       cmake --build "$MYSQL_BLD" --target component_mcp -j"$(nproc)"
-      cp "$MYSQL_BLD/plugin_output_directory/component_mcp.so" "$OUT/"
+      cp "$MYSQL_BLD/plugin_output_directory/component_mcp.so" /workspace/src/mcp/endpoint/mcp.json "$OUT/"
     fi
     ls -la "$OUT"
     chown -R "${HOST_UID}:${HOST_GID}" "$MYSQL_SRC" "$BUILD" "$OUT" 2>/dev/null || true

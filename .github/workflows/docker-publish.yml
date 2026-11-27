@@ -1,10 +1,12 @@
 name: Publish mysql-mcp images
 
-# Builds component_mcp_guard for each supported release (amd64, arm64) and publishes the
-# mysql-mcp image family, ghcr.io/<owner>/mysql-mcp:<mysql-version> and :<mysql-release>: the
-# official MySQL image of that exact release with the guard and the SQL tool pack. A component
-# works only on the exact release it was built against, so each image is based on it.
+# Publishes the mysql-mcp image family, ghcr.io/<owner>/mysql-mcp:<mysql-version> and
+# :<mysql-release>: the official MySQL image of that exact release with component_mcp_guard and
+# the SQL tool pack, and on 26.10 component_mcp. A component works only on the exact release it
+# was built against, so each image is based on it.
 #
+# The components are built on native amd64 and arm64 runners (component_mcp is built in the
+# server tree, far too slow under emulation); the multi-arch images are then assembled from them.
 # Runs on a release tag (v*), or by hand: a dry run builds and tests without pushing.
 
 on:
@@ -19,14 +21,52 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  mysql-mcp-image:
+  build:
+    name: build (${{ matrix.mysql-release }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql-release: ["8.4.13", "9.7.4", "26.10.0"]
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build the components
+        env:
+          MYSQL_RELEASE: ${{ matrix.mysql-release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # component_mcp needs MySQL 26.10 or later.
+          case "$MYSQL_RELEASE" in 26.1[0-9].* | 2[7-9].* | [3-9][0-9].*) export BUILD_ENDPOINT=ON ;; esac
+          scripts/build-components-docker.sh "mysql-${MYSQL_RELEASE}" dist
+          mkdir -p stage
+          cp dist/component_mcp_guard.so "stage/component_mcp_guard-${ARCH}.so"
+          if [ "${BUILD_ENDPOINT:-OFF}" = ON ]; then cp dist/component_mcp.so "stage/component_mcp-${ARCH}.so"; fi
+          ls -la stage
+
+      - name: Upload the components
+        uses: actions/upload-artifact@v4
+        with:
+          name: components-${{ matrix.mysql-release }}-${{ matrix.arch }}
+          path: stage/
+          retention-days: 7
+
+  image:
     # Push only from a version tag; a dispatch from a branch must not overwrite public tags.
     name: mysql-mcp (${{ matrix.mysql-release }})
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -45,35 +85,35 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Download the components
+        uses: actions/download-artifact@v4
+        with:
+          pattern: components-${{ matrix.mysql-release }}-*
+          merge-multiple: true
+          # The Dockerfile copies component_mcp*-<arch>.so from the repository root.
+          path: .
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build component_mcp_guard (amd64, arm64)
-        env:
-          MYSQL_RELEASE: ${{ matrix.mysql-release }}
-        run: |
-          for arch in amd64 arm64; do
-            DOCKER_PLATFORM="linux/${arch}" scripts/build-components-docker.sh \
-              "mysql-${MYSQL_RELEASE}" "dist/${arch}"
-            # The Dockerfile copies component_mcp_guard-<arch>.so from the repo root.
-            cp "dist/${arch}/component_mcp_guard.so" "component_mcp_guard-${arch}.so"
-          done
-
       - name: Test the image
         env:
           MYSQL_RELEASE: ${{ matrix.mysql-release }}
         run: |
+          ls -la component_mcp*-*.so
           for arch in amd64 arm64; do
             docker buildx build --platform "linux/${arch}" --file docker/mysql-mcp/Dockerfile \
               --build-arg MYSQL_VERSION="$MYSQL_RELEASE" -t "mysql-mcp-smoke:${MYSQL_RELEASE}-${arch}" --load .
           done
-          # Full first-start test natively; arm64 under QEMU checks the contents only.
+          # Full test natively; arm64 under QEMU checks the contents only.
           scripts/test-mysql-mcp-image.sh "mysql-mcp-smoke:${MYSQL_RELEASE}-amd64"
+          endpoint=true
+          [ -f component_mcp-arm64.so ] || endpoint=false
           docker run --rm --platform linux/arm64 --entrypoint /bin/sh "mysql-mcp-smoke:${MYSQL_RELEASE}-arm64" -c \
-            "test -f /usr/lib64/mysql/plugin/component_mcp_guard.so && test -f /usr/share/mysql-mcp/mysql_mcp.sql && test -f /docker-entrypoint-initdb.d/50-mysql-mcp.sh"
+            "test -f /usr/lib64/mysql/plugin/component_mcp_guard.so && test -f /usr/share/mysql-mcp/mysql_mcp.sql && test -f /docker-entrypoint-initdb.d/50-mysql-mcp.sh && { ! $endpoint || test -f /usr/lib64/mysql/plugin/component_mcp.so; }"
 
       - name: Log in to GitHub Container Registry
         if: env.PUSH == 'true'

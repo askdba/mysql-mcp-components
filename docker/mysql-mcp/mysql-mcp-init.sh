@@ -8,7 +8,12 @@
 #     holds MCP_USER (so the guard applies to it), EXECUTE on mysql_mcp and SELECT, SHOW
 #     VIEW on MYSQL_MCP_DATABASES (comma-separated; default MYSQL_DATABASE);
 #   - MYSQL_MCP_ALLOWED_SCHEMAS, MYSQL_MCP_MAX_EXECUTION_TIME_MS: persisted as
-#     mcp.allowed_schemas and mcp.max_execution_time_ms.
+#     mcp.allowed_schemas and mcp.max_execution_time_ms;
+#   - MYSQL_MCP_HTTP_TOKEN (26.10 image): installs component_mcp, the MCP endpoint, with the
+#     token mapped to MYSQL_MCP_USER in mysql.mcp_tokens (only its SHA-256 is stored). It
+#     listens on MYSQL_MCP_HTTP_BIND_ADDRESS (default 0.0.0.0), port MYSQL_MCP_HTTP_PORT
+#     (default 33480), with TLS from MYSQL_MCP_HTTP_SSL_CERT / MYSQL_MCP_HTTP_SSL_KEY (default:
+#     the server's own certificate in the data directory); plain HTTP only on loopback.
 
 # Batches with literals start with this, so _mcp_sql_literal's escaping holds even when
 # the server runs with NO_BACKSLASH_ESCAPES.
@@ -67,4 +72,34 @@ GRANT SELECT, SHOW VIEW ON $(_mcp_sql_ident "$_mcp_pattern").* TO $_mcp_account;
 	done
 	docker_process_sql --database=mysql <<<"$_mcp_grants"
 fi
+# The checks (token set, MYSQL_MCP_USER set, component_mcp present) ran in the entrypoint.
+if [ -n "${MYSQL_MCP_HTTP_TOKEN:-}" ]; then
+	mysql_note "mysql-mcp: installing component_mcp (MCP endpoint)"
+	docker_process_sql --database=mysql </usr/share/mysql-mcp/mcp_tokens.sql
+	_mcp_hash=$(printf '%s' "$MYSQL_MCP_HTTP_TOKEN" | sha256sum | cut -d' ' -f1)
+	_mcp_bind=${MYSQL_MCP_HTTP_BIND_ADDRESS:-0.0.0.0}
+	_mcp_http="$_mcp_backslash_escapes
+INSERT INTO mysql.mcp_tokens (token_sha256, account, comment)
+  VALUES ('$_mcp_hash', $(_mcp_sql_literal "$MYSQL_MCP_USER@%"), 'MYSQL_MCP_HTTP_TOKEN (mysql-mcp image)');
+INSTALL COMPONENT 'file://component_mcp'
+  SET PERSIST mcp_http.port = ${MYSQL_MCP_HTTP_PORT:-33480},
+      PERSIST mcp_http.bind_address = $(_mcp_sql_literal "$_mcp_bind")"
+	# Loopback as component_mcp decides it: a literal IPv4 127.0.0.0/8 address, ::1 or localhost.
+	# Anything else needs TLS (a host name like 127.example.com included).
+	_mcp_octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+	_mcp_tls=yes
+	if [ "$_mcp_bind" = localhost ] || [ "$_mcp_bind" = ::1 ] ||
+		[[ "$_mcp_bind" =~ ^127\.$_mcp_octet\.$_mcp_octet\.$_mcp_octet$ ]]; then
+		_mcp_tls=${MYSQL_MCP_HTTP_SSL_CERT:+yes}
+	fi
+	if [ "$_mcp_tls" = yes ]; then
+		_mcp_datadir=$(docker_process_sql -N -B <<<"SELECT @@datadir")
+		_mcp_datadir=${_mcp_datadir%/}
+		_mcp_http+=",
+      PERSIST mcp_http.ssl_cert = $(_mcp_sql_literal "${MYSQL_MCP_HTTP_SSL_CERT:-$_mcp_datadir/server-cert.pem}"),
+      PERSIST mcp_http.ssl_key = $(_mcp_sql_literal "${MYSQL_MCP_HTTP_SSL_KEY:-$_mcp_datadir/server-key.pem}")"
+	fi
+	docker_process_sql --database=mysql <<<"$_mcp_http"
+fi
+unset _mcp_hash _mcp_bind _mcp_http _mcp_tls _mcp_datadir _mcp_octet
 unset _mcp_backslash_escapes _mcp_roots _mcp_root _mcp_settings _mcp_account _mcp_grants _mcp_dbs _mcp_db _mcp_pattern
