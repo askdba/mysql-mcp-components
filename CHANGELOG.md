@@ -5,6 +5,7 @@
 - Moved from askdba/myvector with history: `component_mcp_guard`, `component_mcp`, the `mysql_mcp` SQL tool pack, the `mysql-mcp` image, and their tests.
 - Own build (`CMakeLists.txt`, `scripts/build-components-docker.sh`), CI and image publishing.
 - **`component_mcp` in the `mysql-mcp:26.10` image.** `MYSQL_MCP_HTTP_TOKEN` (with `MYSQL_MCP_USER`) installs it at first start: the token's SHA-256 goes into `mysql.mcp_tokens`, and the endpoint listens on `0.0.0.0:33480` over HTTPS with the server's own certificate (`MYSQL_MCP_HTTP_PORT`, `MYSQL_MCP_HTTP_BIND_ADDRESS`, `MYSQL_MCP_HTTP_SSL_CERT` / `_KEY`), settings persisted. `component_mcp` gets its manifest, `mcp.json`. Images are now built from components compiled on native amd64 and arm64 runners.
+- **`component_mcp` serves 20 tools.** Besides `list_databases`, `list_tables`, `describe_table`, `run_query`, `ping` and `server_info`, it serves the tool pack's other catalog tools with mysql-mcp-server's names, descriptions and arguments: `show_create_table`, `list_indexes`, `list_views`, `list_triggers`, `list_procedures`, `list_functions`, `list_partitions`, `database_size`, `table_size`, `foreign_keys`, `list_status`, `list_variables`, `vector_info` and `search_schema`. `process_list` is not served: mysql-mcp-server offers it only when enabled.
 
 Changes made in askdba/myvector before the move, not yet released there (moved from its changelog):
 

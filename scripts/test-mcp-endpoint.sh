@@ -68,8 +68,8 @@ expect "a browser Origin is refused: 403, even with the token" "$(rpc_origin htt
 expect "a localhost Origin is refused too unless allowed" "$(rpc_origin http://localhost:6274 '{"jsonrpc":"2.0","id":1,"method":"ping"}')" "^403$"
 expect "initialize" "$(rpc tok-123 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}')" '"serverInfo":\{"name":"component_mcp"'
 expect "notification: 202" "$(rpc tok-123 '{"jsonrpc":"2.0","method":"notifications/initialized"}')" "^202$"
-expect "tools/list: the six core tools" "$(rpc tok-123 '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -o '"name":"[a-z_]*"' | tr '\n' ' ')" '^"name":"list_databases" "name":"list_tables" "name":"describe_table" "name":"run_query" "name":"ping" "name":"server_info" $'
-expect "tools/list: catalog and status tools are annotated read-only, run_query is not" "$(rpc tok-123 '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -oE '"name":"[a-z_]*","description":"[^"]*",("annotations":\{"readOnlyHint":true)?' | sed 's/"description":"[^"]*",//; s/"annotations":{"readOnlyHint":true/ro/' | tr '\n' ' ')" '^"name":"list_databases",ro "name":"list_tables",ro "name":"describe_table",ro "name":"run_query", "name":"ping",ro "name":"server_info",ro $'
+expect "tools/list: the 20 tools" "$(rpc tok-123 '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -o '"name":"[a-z_]*"' | tr '\n' ' ')" '^"name":"list_databases" "name":"list_tables" "name":"describe_table" "name":"run_query" "name":"ping" "name":"server_info" "name":"show_create_table" "name":"list_indexes" "name":"list_views" "name":"list_triggers" "name":"list_procedures" "name":"list_functions" "name":"list_partitions" "name":"database_size" "name":"table_size" "name":"foreign_keys" "name":"list_status" "name":"list_variables" "name":"vector_info" "name":"search_schema" $'
+expect "tools/list: catalog and status tools are annotated read-only, run_query is not" "$(rpc tok-123 '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -oE '"name":"[a-z_]*","description":"[^"]*",("annotations":\{"readOnlyHint":true)?' | sed 's/"description":"[^"]*",//; s/"annotations":{"readOnlyHint":true/ro/' | tr '\n' ' ')" '^"name":"list_databases",ro "name":"list_tables",ro "name":"describe_table",ro "name":"run_query", "name":"ping",ro "name":"server_info",ro "name":"show_create_table",ro "name":"list_indexes",ro "name":"list_views",ro "name":"list_triggers",ro "name":"list_procedures",ro "name":"list_functions",ro "name":"list_partitions",ro "name":"database_size",ro "name":"table_size",ro "name":"foreign_keys",ro "name":"list_status",ro "name":"list_variables",ro "name":"vector_info",ro "name":"search_schema",ro $'
 expect "unknown method" "$(rpc tok-123 '{"jsonrpc":"2.0","id":3,"method":"nope"}')" '"code":-32601'
 expect "list_databases via the tool pack" "$(call list_databases '{}')" 'SCHEMA_NAME.*d1.*"isError":false'
 expect "list_tables via the tool pack" "$(call list_tables '{"database":"d1"}')" 'TABLE_NAME\\":\\"big\\".*TABLE_NAME\\":\\"t\\".*"isError":false'
@@ -82,6 +82,37 @@ SQL
 expect "arguments are literals, kept byte for byte (quotes, backslashes, SQL)" "$(call describe_table '{"database":"d1","table":"t\\\\'"'"'); SELECT 1; -- x"}')" 'COLUMN_NAME\\":\\"i\\".*COLUMN_NAME\\":\\"j\\".*"isError":false'
 expect "describe_table without table is a tool error" "$(call describe_table '{"database":"d1"}')" 'needs string arguments database and table.*"isError":true'
 expect "list_tables with a non-string database is a tool error" "$(call list_tables '{"database":1}')" 'needs a string argument database.*"isError":true'
+# The tool pack's catalog tools, with mysql-mcp-server's names and arguments, on objects in d3.
+docker exec -i "$C" mysql -h127.0.0.1 -uroot -ptestpass 2>&1 <<'SQL' | grep -v "Using a password"
+CREATE DATABASE d3;
+CREATE TABLE d3.parent (id INT PRIMARY KEY, name VARCHAR(20), KEY name_idx (name));
+CREATE TABLE d3.child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY fk_parent (parent_id) REFERENCES d3.parent (id));
+CREATE VIEW d3.parent_names AS SELECT name FROM d3.parent;
+CREATE TABLE d3.parts (id INT) PARTITION BY HASH (id) PARTITIONS 2;
+GRANT SELECT, SHOW VIEW ON d3.* TO mcp@'%';
+SQL
+expect "show_create_table" "$(call show_create_table '{"database":"d3","table":"parent"}')" 'CREATE TABLE `parent`.*"isError":false'
+expect "list_indexes" "$(call list_indexes '{"database":"d3","table":"parent"}')" 'name_idx.*"isError":false'
+expect "list_views" "$(call list_views '{"database":"d3"}')" 'parent_names.*"isError":false'
+expect "list_partitions" "$(call list_partitions '{"database":"d3","table":"parts"}')" 'p0.*p1.*"isError":false'
+expect "foreign_keys, table optional" "$(call foreign_keys '{"database":"d3"}')" 'REFERENCED_TABLE_NAME\\":\\"parent.*"isError":false'
+expect "table_size, table optional" "$(call table_size '{"database":"d3"}')" 'child.*parent.*"isError":false'
+expect "database_size, database optional" "$(call database_size '{}')" 'd3.*"isError":false'
+expect "list_variables with a pattern" "$(call list_variables '{"pattern":"version_comment"}')" 'version_comment.*"isError":false'
+expect "list_status with a pattern" "$(call list_status '{"pattern":"Uptime"}')" 'Uptime.*"isError":false'
+expect "list_triggers, list_procedures, list_functions (none here)" "$(call list_triggers '{"database":"d3"}' | grep -c '"isError":false') $(call list_procedures '{"database":"d3"}' | grep -c '"isError":false') $(call list_functions '{"database":"d3"}' | grep -c '"isError":false')" "^1 1 1$"
+expect "vector_info (no vector columns here)" "$(call vector_info '{"database":"d3"}')" 'rows\\":\[\].*"isError":false'
+expect "search_schema: tables and columns" "$(call search_schema '{"pattern":"%parent%","database":"d3"}')" 'tables\\":\[.*parent.*columns\\":\[.*parent_id.*truncated\\":false.*"isError":false'
+# The match limit: exactly 1000 matches are complete, 1001 are truncated to 1000.
+cols=$(seq -f 'zq_%04g INT' 1 1000 | paste -sd, -)
+sql "CREATE TABLE d3.wide ($cols)"
+search_zq() { call search_schema '{"pattern":"zq\\_%","database":"d3"}'; }
+expect "search_schema: exactly 1000 matches are not truncated" "$(search_zq | grep -o 'COLUMN_NAME\\":\\"zq_' | wc -l | tr -d ' ') $(search_zq | grep -o 'truncated\\":[a-z]*')" '^1000 truncated\\":false$'
+sql "CREATE TABLE d3.wide2 (zq_extra INT)"
+expect "search_schema: 1001 matches are truncated to 1000" "$(search_zq | grep -o 'COLUMN_NAME\\":\\"zq_' | wc -l | tr -d ' ') $(search_zq | grep -o 'truncated\\":[a-z]*')" '^1000 truncated\\":true$'
+expect "search_schema without a pattern is a tool error" "$(call search_schema '{}')" 'needs a non-empty string argument pattern.*"isError":true'
+expect "a pack tool without its required argument is a tool error" "$(call list_views '{}')" 'list_views needs a string argument database.*"isError":true'
+expect "a non-string optional argument is a tool error" "$(call table_size '{"database":"d3","table":7}')" "table_size's argument table must be a string.*\"isError\":true"
 expect "ping" "$(call ping '{}')" 'success\\":true,\\"latency_ms\\":[0-9]+,\\"message\\":\\"pong\\".*"isError":false'
 expect "server_info, as the mapped account (one object, not rows)" "$(call server_info '{}')" '"text":"\{\\"version\\":\\"26\.10\.[0-9]+\\",\\"server_engine\\":\\"mysql\\".*current_user\\":\\"mcp@%\\",\\"current_database\\":\\"\\".*max_connections\\":\\"[0-9]+\\".*"isError":false'
 expect "large result truncated at 1000 rows" "$(call run_query '{"sql":"SELECT n FROM d1.big"}' | grep -o '\\"n\\":' | wc -l) $(call run_query '{"sql":"SELECT n FROM d1.big"}' | grep -o 'truncated\\":true' | head -1)" "^1000 truncated"
@@ -342,7 +373,7 @@ disc=$(sl server/discover '')
 expect "server/discover: 200, without an Mcp-Session-Id" "$(printf '%s\n' "$disc" | grep -ciE '^HTTP/1.1 200|^mcp-session-id' | tr -d ' ')" "^1$"
 expect "server/discover: every supported version, newest first" "$disc" '"supportedVersions":\["2026-07-28","2025-11-25","2025-06-18","2025-03-26","2024-11-05"\],"capabilities":\{"tools":\{\}\}'
 expect "server/discover: resultType, cache hints, serverInfo in _meta" "$disc" '"resultType":"complete","ttlMs":3600000,"cacheScope":"public","_meta":\{"io.modelcontextprotocol/serverInfo":\{"name":"component_mcp","version":"[^"]+"\}\}'
-expect "tools/list: the six tools, with cache hints" "$(sl tools/list '' | tail -1 | grep -o '"name":"[a-z_]*"\|"ttlMs":[0-9]*\|"cacheScope":"[a-z]*"' | tr '\n' ' ')" '^"name":"list_databases" "name":"list_tables" "name":"describe_table" "name":"run_query" "name":"ping" "name":"server_info" "ttlMs":3600000 "cacheScope":"public" "name":"component_mcp" $'
+expect "tools/list: the 20 tools, with cache hints" "$(sl tools/list '' | tail -1 | grep -o '"name":"[a-z_]*"\|"ttlMs":[0-9]*\|"cacheScope":"[a-z]*"' | tr '\n' ' ')" '^"name":"list_databases" "name":"list_tables" "name":"describe_table" "name":"run_query" "name":"ping" "name":"server_info" "name":"show_create_table" "name":"list_indexes" "name":"list_views" "name":"list_triggers" "name":"list_procedures" "name":"list_functions" "name":"list_partitions" "name":"database_size" "name":"table_size" "name":"foreign_keys" "name":"list_status" "name":"list_variables" "name":"vector_info" "name":"search_schema" "ttlMs":3600000 "cacheScope":"public" "name":"component_mcp" $'
 slcall=$(sl tools/call "$SLQ" -H 'Mcp-Name: run_query')
 expect "tools/call: served, resultType complete" "$slcall" 'one\\":\\"1\\".*"isError":false,"resultType":"complete","_meta":\{"io.modelcontextprotocol/serverInfo"'
 expect "tools/call: no ttlMs on a call result, no Mcp-Session-Id" "$(printf '%s\n' "$slcall" | grep -ciE 'ttlMs|^mcp-session-id' | tr -d ' ')" "^0$"
